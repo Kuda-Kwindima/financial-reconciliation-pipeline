@@ -1,6 +1,4 @@
-CREATE TABLE IF NOT EXISTS warehouse.fact_reconciliation_results (
-
-    reconciliation_id BIGSERIAL PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS marts.mart_exception_summary (
 
     pos_transaction_id VARCHAR(50),
 
@@ -18,8 +16,6 @@ CREATE TABLE IF NOT EXISTS warehouse.fact_reconciliation_results (
 
     amount_difference NUMERIC(10,2),
 
-    reconciliation_status VARCHAR(50),
-
-    reconciliation_timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    reconciliation_status VARCHAR(50)
 
 );
