@@ -56,10 +56,12 @@ def main() -> None:
         "sql/marts/create_mart_reconciliation_summary.sql",
         "sql/marts/create_mart_store_reconciliation_performance.sql",
         "sql/marts/create_mart_exception_summary.sql",
+        "sql/marts/create_mart_payment_method_performance.sql",
 
         "sql/marts/load_mart_reconciliation_summary.sql",
         "sql/marts/load_mart_store_reconciliation_performance.sql",
         "sql/marts/load_mart_exception_summary.sql",
+        "sql/marts/load_mart_payment_method_performance.sql",
     ]
 
     for sql_file in sql_files:

@@ -1,11 +1,8 @@
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine
 
-
-BASE_DIR = Path(__file__).resolve().parents[1]
-RAW_DIR = BASE_DIR / "data" / "raw"
 
 DB_USER = "postgres"
 DB_PASSWORD = "postgres"
@@ -13,25 +10,30 @@ DB_HOST = "localhost"
 DB_PORT = "5434"
 DB_NAME = "reconciliation_db"
 
-engine = create_engine(
-    f"postgresql+psycopg2://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
-)
+BASE_DIR = Path(__file__).resolve().parents[1]
+RAW_DIR = BASE_DIR / "data" / "raw"
 
 
-def create_schemas() -> None:
-    with engine.begin() as conn:
-        conn.execute(text("CREATE SCHEMA IF NOT EXISTS staging;"))
-        conn.execute(text("CREATE SCHEMA IF NOT EXISTS warehouse;"))
-        conn.execute(text("CREATE SCHEMA IF NOT EXISTS marts;"))
+def get_engine():
+    connection_string = (
+        f"postgresql+psycopg2://"
+        f"{DB_USER}:{DB_PASSWORD}@"
+        f"{DB_HOST}:{DB_PORT}/"
+        f"{DB_NAME}"
+    )
+
+    return create_engine(connection_string)
 
 
-def load_csv_to_staging(file_name: str, table_name: str) -> None:
+def load_csv_to_postgres(file_name: str, table_name: str) -> None:
     file_path = RAW_DIR / file_name
 
     if not file_path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
 
     df = pd.read_csv(file_path)
+
+    engine = get_engine()
 
     df.to_sql(
         name=table_name,
@@ -46,17 +48,16 @@ def load_csv_to_staging(file_name: str, table_name: str) -> None:
 
 
 def main() -> None:
-    create_schemas()
+    files_to_load = {
+        "pos_transactions.csv": "pos_transactions",
+        "bank_settlements.csv": "bank_settlements",
+        "cash_deposits.csv": "cash_deposits",
+        "guest_ledger_settlements.csv": "guest_ledger_settlements",
+        "corporate_receivables.csv": "corporate_receivables",
+    }
 
-    load_csv_to_staging(
-        file_name="pos_transactions.csv",
-        table_name="pos_transactions",
-    )
-
-    load_csv_to_staging(
-        file_name="bank_settlements.csv",
-        table_name="bank_settlements",
-    )
+    for file_name, table_name in files_to_load.items():
+        load_csv_to_postgres(file_name, table_name)
 
     print("Staging load complete.")
 

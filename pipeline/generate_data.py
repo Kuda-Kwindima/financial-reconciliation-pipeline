@@ -97,14 +97,21 @@ def generate_pos_transactions() -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
-def generate_bank_settlements(pos_df: pd.DataFrame) -> pd.DataFrame:
-    bank_records = []
-    bank_counter = 1
-
-    card_payment_methods = ["Visa", "Mastercard", "Amex"]
+def generate_settlement_records(
+    pos_df: pd.DataFrame,
+    payment_methods: list[str],
+    id_prefix: str,
+    reference_column_name: str,
+    amount_column_name: str,
+    date_column_name: str,
+    account_column_name: str,
+    account_value: str,
+) -> pd.DataFrame:
+    records = []
+    settlement_counter = 1
 
     eligible_pos = pos_df[
-        pos_df["payment_method"].isin(card_payment_methods)
+        pos_df["payment_method"].isin(payment_methods)
     ].copy()
 
     for _, row in eligible_pos.iterrows():
@@ -122,13 +129,13 @@ def generate_bank_settlements(pos_df: pd.DataFrame) -> pd.DataFrame:
         if issue_type == "missing":
             continue
 
-        settlement_delay = np.random.randint(1, 3)
+        settlement_delay = int(np.random.randint(1, 3))
 
         if issue_type == "delayed":
-            settlement_delay = np.random.randint(4, 10)
+            settlement_delay = int(np.random.randint(4, 10))
 
         settlement_date = pd.to_datetime(row["transaction_date"]) + timedelta(
-            days=int(settlement_delay)
+            days=settlement_delay
         )
 
         settled_amount = row["gross_amount"]
@@ -137,61 +144,81 @@ def generate_bank_settlements(pos_df: pd.DataFrame) -> pd.DataFrame:
             difference = round(np.random.uniform(1, 15), 2)
             settled_amount = round(row["gross_amount"] - difference, 2)
 
-        bank_records.append(
-            {
-                "bank_transaction_id": f"BANK{bank_counter:07d}",
-                "settlement_date": settlement_date.date(),
-                "reference_id": row["pos_transaction_id"],
-                "store_id": row["store_id"],
-                "settled_amount": settled_amount,
-                "currency": "USD",
-                "bank_account": "DHG_OPERATING_ACCOUNT",
-            }
-        )
-        bank_counter += 1
+        record = {
+            f"{id_prefix.lower()}_transaction_id": f"{id_prefix}{settlement_counter:07d}",
+            date_column_name: settlement_date.date(),
+            reference_column_name: row["pos_transaction_id"],
+            "store_id": row["store_id"],
+            amount_column_name: settled_amount,
+            "currency": "USD",
+            account_column_name: account_value,
+        }
+
+        records.append(record)
+        settlement_counter += 1
 
         if issue_type == "duplicate":
-            bank_records.append(
-                {
-                    "bank_transaction_id": f"BANK{bank_counter:07d}",
-                    "settlement_date": settlement_date.date(),
-                    "reference_id": row["pos_transaction_id"],
-                    "store_id": row["store_id"],
-                    "settled_amount": settled_amount,
-                    "currency": "USD",
-                    "bank_account": "DHG_OPERATING_ACCOUNT",
-                }
-            )
-            bank_counter += 1
+            duplicate_record = record.copy()
+            duplicate_record[
+                f"{id_prefix.lower()}_transaction_id"
+            ] = f"{id_prefix}{settlement_counter:07d}"
 
-    unknown_count = int(len(pos_df) * 0.005)
+            records.append(duplicate_record)
+            settlement_counter += 1
 
-    for _ in range(unknown_count):
-        store_id = np.random.choice(list(STORES.keys()))
-        store = STORES[store_id]
-        random_month = pd.Timestamp(np.random.choice(MONTHS.to_list()))
-        settlement_date = random_date_in_month(random_month)
+    return pd.DataFrame(records)
 
-        bank_records.append(
-            {
-                "bank_transaction_id": f"BANK{bank_counter:07d}",
-                "settlement_date": settlement_date.date(),
-                "reference_id": f"UNKNOWN-{bank_counter:07d}",
-                "store_id": store_id,
-                "settled_amount": round(
-                    np.random.uniform(
-                        store["min_amount"],
-                        store["max_amount"],
-                    ),
-                    2,
-                ),
-                "currency": "USD",
-                "bank_account": "DHG_OPERATING_ACCOUNT",
-            }
-        )
-        bank_counter += 1
 
-    return pd.DataFrame(bank_records)
+def generate_bank_settlements(pos_df: pd.DataFrame) -> pd.DataFrame:
+    return generate_settlement_records(
+        pos_df=pos_df,
+        payment_methods=["Visa", "Mastercard", "Amex"],
+        id_prefix="BANK",
+        reference_column_name="reference_id",
+        amount_column_name="settled_amount",
+        date_column_name="settlement_date",
+        account_column_name="bank_account",
+        account_value="DHG_OPERATING_ACCOUNT",
+    )
+
+
+def generate_cash_deposits(pos_df: pd.DataFrame) -> pd.DataFrame:
+    return generate_settlement_records(
+        pos_df=pos_df,
+        payment_methods=["Cash"],
+        id_prefix="CASH",
+        reference_column_name="reference_id",
+        amount_column_name="deposited_amount",
+        date_column_name="deposit_date",
+        account_column_name="cash_account",
+        account_value="DHG_CASH_CLEARING_ACCOUNT",
+    )
+
+
+def generate_guest_ledger_settlements(pos_df: pd.DataFrame) -> pd.DataFrame:
+    return generate_settlement_records(
+        pos_df=pos_df,
+        payment_methods=["Room Charge"],
+        id_prefix="LEDGER",
+        reference_column_name="reference_id",
+        amount_column_name="ledger_amount",
+        date_column_name="ledger_settlement_date",
+        account_column_name="ledger_account",
+        account_value="DHG_GUEST_LEDGER",
+    )
+
+
+def generate_corporate_receivables(pos_df: pd.DataFrame) -> pd.DataFrame:
+    return generate_settlement_records(
+        pos_df=pos_df,
+        payment_methods=["Corporate Account"],
+        id_prefix="CORP",
+        reference_column_name="reference_id",
+        amount_column_name="receivable_amount",
+        date_column_name="receivable_settlement_date",
+        account_column_name="receivable_account",
+        account_value="DHG_CORPORATE_RECEIVABLES",
+    )
 
 
 def main() -> None:
@@ -201,16 +228,28 @@ def main() -> None:
     print("Generating bank settlements...")
     bank_df = generate_bank_settlements(pos_df)
 
-    pos_path = RAW_DIR / "pos_transactions.csv"
-    bank_path = RAW_DIR / "bank_settlements.csv"
+    print("Generating cash deposits...")
+    cash_df = generate_cash_deposits(pos_df)
 
-    pos_df.to_csv(pos_path, index=False)
-    bank_df.to_csv(bank_path, index=False)
+    print("Generating guest ledger settlements...")
+    ledger_df = generate_guest_ledger_settlements(pos_df)
 
-    print(f"POS transactions saved to: {pos_path}")
-    print(f"Bank settlements saved to: {bank_path}")
-    print(f"POS rows: {len(pos_df):,}")
-    print(f"Bank rows: {len(bank_df):,}")
+    print("Generating corporate receivables...")
+    corporate_df = generate_corporate_receivables(pos_df)
+
+    output_files = {
+        "pos_transactions.csv": pos_df,
+        "bank_settlements.csv": bank_df,
+        "cash_deposits.csv": cash_df,
+        "guest_ledger_settlements.csv": ledger_df,
+        "corporate_receivables.csv": corporate_df,
+    }
+
+    for file_name, dataframe in output_files.items():
+        file_path = RAW_DIR / file_name
+        dataframe.to_csv(file_path, index=False)
+        print(f"{file_name} saved to: {file_path}")
+        print(f"{file_name} rows: {len(dataframe):,}")
 
 
 if __name__ == "__main__":
