@@ -1,8 +1,8 @@
-CREATE TABLE IF NOT EXISTS marts.mart_store_reconciliation_performance (
+CREATE TABLE IF NOT EXISTS marts.mart_payment_method_performance (
 
-    store_id VARCHAR(10),
+    payment_method VARCHAR(50),
 
-    store_name VARCHAR(100),
+    settlement_channel VARCHAR(50),
 
     total_transactions BIGINT,
 
