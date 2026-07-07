@@ -1,28 +1,31 @@
+import os
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import create_engine
+from sqlalchemy import URL, create_engine
 
 
-DB_USER = "postgres"
-DB_PASSWORD = "postgres"
-DB_HOST = "localhost"
-DB_PORT = "5434"
-DB_NAME = "reconciliation_db"
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = int(os.getenv("DB_PORT", "5434"))
+DB_NAME = os.getenv("DB_NAME", "reconciliation_db")
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 RAW_DIR = BASE_DIR / "data" / "raw"
 
 
 def get_engine():
-    connection_string = (
-        f"postgresql+psycopg2://"
-        f"{DB_USER}:{DB_PASSWORD}@"
-        f"{DB_HOST}:{DB_PORT}/"
-        f"{DB_NAME}"
+    connection_url = URL.create(
+        drivername="postgresql+psycopg2",
+        username=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
     )
 
-    return create_engine(connection_string)
+    return create_engine(connection_url)
 
 
 def load_csv_to_postgres(file_name: str, table_name: str) -> None:
