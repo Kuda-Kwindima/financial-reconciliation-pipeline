@@ -1,8 +1,8 @@
-import os
+﻿import os
 from pathlib import Path
 
 import pandas as pd
-from sqlalchemy import URL, create_engine
+from sqlalchemy import URL, create_engine, text
 
 
 DB_USER = os.getenv("DB_USER", "postgres")
@@ -28,6 +28,11 @@ def get_engine():
     return create_engine(connection_url)
 
 
+def ensure_staging_schema_exists(engine) -> None:
+    with engine.begin() as connection:
+        connection.execute(text("CREATE SCHEMA IF NOT EXISTS staging;"))
+
+
 def load_csv_to_postgres(file_name: str, table_name: str) -> None:
     file_path = RAW_DIR / file_name
 
@@ -37,6 +42,7 @@ def load_csv_to_postgres(file_name: str, table_name: str) -> None:
     df = pd.read_csv(file_path)
 
     engine = get_engine()
+    ensure_staging_schema_exists(engine)
 
     df.to_sql(
         name=table_name,
