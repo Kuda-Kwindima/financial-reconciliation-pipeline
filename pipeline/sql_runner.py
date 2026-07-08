@@ -1,29 +1,29 @@
+import os
 from pathlib import Path
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import URL, create_engine, text
 
 
-DB_CONFIG = {
-    "host": "localhost",
-    "port": 5434,
-    "database": "reconciliation_db",
-    "user": "postgres",
-    "password": "postgres",
-}
-
+DB_USER = os.getenv("DB_USER", "postgres")
+DB_PASSWORD = os.getenv("DB_PASSWORD", "postgres")
+DB_HOST = os.getenv("DB_HOST", "localhost")
+DB_PORT = int(os.getenv("DB_PORT", "5434"))
+DB_NAME = os.getenv("DB_NAME", "reconciliation_db")
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 
 
 def get_engine():
-    connection_string = (
-        f"postgresql+psycopg2://"
-        f"{DB_CONFIG['user']}:{DB_CONFIG['password']}@"
-        f"{DB_CONFIG['host']}:{DB_CONFIG['port']}/"
-        f"{DB_CONFIG['database']}"
+    connection_url = URL.create(
+        drivername="postgresql+psycopg2",
+        username=DB_USER,
+        password=DB_PASSWORD,
+        host=DB_HOST,
+        port=DB_PORT,
+        database=DB_NAME,
     )
 
-    return create_engine(connection_string)
+    return create_engine(connection_url)
 
 
 def run_sql_file(sql_file_path: str) -> None:
@@ -46,18 +46,14 @@ def run_sql_file(sql_file_path: str) -> None:
 def main() -> None:
     sql_files = [
         "sql/setup/create_schemas.sql",
-
         "sql/warehouse/create_warehouse_tables.sql",
         "sql/warehouse/load_warehouse_tables.sql",
-
         "sql/warehouse/create_reconciliation_results.sql",
         "sql/warehouse/load_reconciliation_results.sql",
-
         "sql/marts/create_mart_reconciliation_summary.sql",
         "sql/marts/create_mart_store_reconciliation_performance.sql",
         "sql/marts/create_mart_exception_summary.sql",
         "sql/marts/create_mart_payment_method_performance.sql",
-
         "sql/marts/load_mart_reconciliation_summary.sql",
         "sql/marts/load_mart_store_reconciliation_performance.sql",
         "sql/marts/load_mart_exception_summary.sql",
