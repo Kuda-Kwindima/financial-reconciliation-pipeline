@@ -1,13 +1,18 @@
 import subprocess
 import sys
+from pathlib import Path
 
 
-def run_step(step_name: str, command: list[str]) -> None:
+BASE_DIR = Path(__file__).resolve().parents[1]
+
+
+def run_step(step_name: str, script_path: Path) -> None:
     print(f"\nStarting: {step_name}")
 
     subprocess.run(
-        command,
+        [sys.executable, str(script_path)],
         check=True,
+        cwd=BASE_DIR,
     )
 
     print(f"Completed: {step_name}")
@@ -16,17 +21,17 @@ def run_step(step_name: str, command: list[str]) -> None:
 def main() -> None:
     run_step(
         "Generate synthetic data",
-        [sys.executable, "pipeline/generate_data.py"],
+        BASE_DIR / "pipeline" / "generate_data.py",
     )
 
     run_step(
         "Load raw CSVs to PostgreSQL staging",
-        [sys.executable, "pipeline/load_to_postgres.py"],
+        BASE_DIR / "pipeline" / "load_to_postgres.py",
     )
 
     run_step(
         "Refresh warehouse and marts",
-        [sys.executable, "pipeline/sql_runner.py"],
+        BASE_DIR / "pipeline" / "sql_runner.py",
     )
 
     print("\nFull pipeline completed successfully.")
