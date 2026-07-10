@@ -1,4 +1,4 @@
-﻿import os
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -28,9 +28,21 @@ def get_engine():
     return create_engine(connection_url)
 
 
-def ensure_staging_schema_exists(engine) -> None:
+def run_sql_file(sql_file_path: str) -> None:
+    sql_path = BASE_DIR / sql_file_path
+
+    if not sql_path.exists():
+        raise FileNotFoundError(f"SQL file not found: {sql_path}")
+
+    with open(sql_path, "r", encoding="utf-8-sig") as file:
+        sql_text = file.read()
+
+    engine = get_engine()
+
     with engine.begin() as connection:
-        connection.execute(text("CREATE SCHEMA IF NOT EXISTS staging;"))
+        connection.execute(text(sql_text))
+
+    print(f"Executed: {sql_file_path}")
 
 
 def load_csv_to_postgres(file_name: str, table_name: str) -> None:
@@ -42,13 +54,12 @@ def load_csv_to_postgres(file_name: str, table_name: str) -> None:
     df = pd.read_csv(file_path)
 
     engine = get_engine()
-    ensure_staging_schema_exists(engine)
 
     df.to_sql(
         name=table_name,
         con=engine,
         schema="staging",
-        if_exists="replace",
+        if_exists="append",
         index=False,
         chunksize=10_000,
     )
@@ -57,6 +68,9 @@ def load_csv_to_postgres(file_name: str, table_name: str) -> None:
 
 
 def main() -> None:
+    run_sql_file("sql/staging/create_staging_tables.sql")
+    run_sql_file("sql/staging/truncate_staging_tables.sql")
+
     files_to_load = {
         "pos_transactions.csv": "pos_transactions",
         "bank_settlements.csv": "bank_settlements",
