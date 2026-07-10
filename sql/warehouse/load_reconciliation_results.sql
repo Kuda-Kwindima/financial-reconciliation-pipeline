@@ -1,4 +1,10 @@
-TRUNCATE TABLE warehouse.fact_reconciliation_results;
+TRUNCATE TABLE warehouse.fact_reconciliation_results
+RESTART IDENTITY;
+
+
+-- ============================================================
+-- NORMALIZE ALL TRUSTED SETTLEMENT FACTS INTO ONE STRUCTURE
+-- ============================================================
 
 WITH normalized_settlements AS (
 
@@ -9,9 +15,12 @@ WITH normalized_settlements AS (
         store_id,
         settled_amount,
         'CARD' AS settlement_channel
+
     FROM warehouse.fact_bank_settlements
 
+
     UNION ALL
+
 
     SELECT
         cash_transaction_id AS settlement_transaction_id,
@@ -20,9 +29,12 @@ WITH normalized_settlements AS (
         store_id,
         deposited_amount AS settled_amount,
         'CASH' AS settlement_channel
+
     FROM warehouse.fact_cash_deposits
 
+
     UNION ALL
+
 
     SELECT
         ledger_transaction_id AS settlement_transaction_id,
@@ -31,9 +43,12 @@ WITH normalized_settlements AS (
         store_id,
         ledger_amount AS settled_amount,
         'GUEST_LEDGER' AS settlement_channel
+
     FROM warehouse.fact_guest_ledger_settlements
 
+
     UNION ALL
+
 
     SELECT
         corp_transaction_id AS settlement_transaction_id,
@@ -42,48 +57,76 @@ WITH normalized_settlements AS (
         store_id,
         receivable_amount AS settled_amount,
         'CORPORATE_RECEIVABLE' AS settlement_channel
+
     FROM warehouse.fact_corporate_receivables
 
 ),
 
-pos_with_expected_channel AS (
+
+-- ============================================================
+-- ENRICH POS FACTS USING DIMENSIONS
+-- ============================================================
+
+pos_enriched AS (
 
     SELECT
-        pos_transaction_id,
-        transaction_date,
-        store_id,
-        payment_method,
-        gross_amount,
-        CASE
-            WHEN payment_method IN ('Visa', 'Mastercard', 'Amex')
-                THEN 'CARD'
-            WHEN payment_method = 'Cash'
-                THEN 'CASH'
-            WHEN payment_method = 'Room Charge'
-                THEN 'GUEST_LEDGER'
-            WHEN payment_method = 'Corporate Account'
-                THEN 'CORPORATE_RECEIVABLE'
-            ELSE 'UNKNOWN'
-        END AS expected_settlement_channel
-    FROM warehouse.fact_pos_transactions
+        p.pos_transaction_id,
+        p.transaction_date,
+
+        s.store_id,
+
+        pm.payment_method,
+        pm.settlement_channel AS expected_settlement_channel,
+
+        p.gross_amount
+
+    FROM warehouse.fact_pos_transactions p
+
+    JOIN warehouse.dim_store s
+        ON p.store_key = s.store_key
+
+    JOIN warehouse.dim_payment_method pm
+        ON p.payment_method_key = pm.payment_method_key
 
 ),
 
-duplicate_settlements AS (
+
+-- ============================================================
+-- AGGREGATE SETTLEMENTS TO ONE ROW PER REFERENCE AND CHANNEL
+-- ============================================================
+
+settlement_summary AS (
 
     SELECT
         reference_id,
-        settlement_channel
+        settlement_channel,
+
+        MIN(settlement_transaction_id)
+            AS representative_settlement_transaction_id,
+
+        MIN(settlement_date)
+            AS first_settlement_date,
+
+        SUM(settled_amount)
+            AS total_settled_amount,
+
+        COUNT(*)
+            AS settlement_record_count
+
     FROM normalized_settlements
+
     GROUP BY
         reference_id,
         settlement_channel
-    HAVING COUNT(*) > 1
 
 )
 
-INSERT INTO warehouse.fact_reconciliation_results (
 
+-- ============================================================
+-- CREATE ONE RECONCILIATION ROW PER ACCEPTED POS TRANSACTION
+-- ============================================================
+
+INSERT INTO warehouse.fact_reconciliation_results (
     pos_transaction_id,
     settlement_transaction_id,
     transaction_date,
@@ -94,55 +137,57 @@ INSERT INTO warehouse.fact_reconciliation_results (
     pos_amount,
     settled_amount,
     amount_difference,
+    settlement_record_count,
     reconciliation_status
-
 )
 
 SELECT
-
     p.pos_transaction_id,
-    s.settlement_transaction_id,
+
+    s.representative_settlement_transaction_id,
 
     p.transaction_date,
-    s.settlement_date,
+
+    s.first_settlement_date,
 
     p.store_id,
 
     p.payment_method,
-    p.expected_settlement_channel AS settlement_channel,
+
+    p.expected_settlement_channel,
 
     p.gross_amount AS pos_amount,
-    s.settled_amount,
 
-    COALESCE(
-        p.gross_amount - s.settled_amount,
-        p.gross_amount
-    ) AS amount_difference,
+    s.total_settled_amount AS settled_amount,
+
+    p.gross_amount
+        - COALESCE(s.total_settled_amount, 0)
+        AS amount_difference,
+
+    COALESCE(s.settlement_record_count, 0)
+        AS settlement_record_count,
 
     CASE
-
         WHEN s.reference_id IS NULL
             THEN 'MISSING_SETTLEMENT'
 
-        WHEN d.reference_id IS NOT NULL
+        WHEN s.settlement_record_count > 1
             THEN 'DUPLICATE_SETTLEMENT'
 
-        WHEN p.gross_amount <> s.settled_amount
+        WHEN p.gross_amount <> s.total_settled_amount
             THEN 'AMOUNT_MISMATCH'
 
-        WHEN (s.settlement_date - p.transaction_date) > 3
+        WHEN (
+            s.first_settlement_date
+            - p.transaction_date
+        ) > 3
             THEN 'DELAYED_SETTLEMENT'
 
         ELSE 'MATCHED'
-
     END AS reconciliation_status
 
-FROM pos_with_expected_channel p
+FROM pos_enriched p
 
-LEFT JOIN normalized_settlements s
+LEFT JOIN settlement_summary s
     ON p.pos_transaction_id = s.reference_id
-    AND p.expected_settlement_channel = s.settlement_channel
-
-LEFT JOIN duplicate_settlements d
-    ON p.pos_transaction_id = d.reference_id
-    AND p.expected_settlement_channel = d.settlement_channel;
+    AND p.expected_settlement_channel = s.settlement_channel;
