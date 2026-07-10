@@ -55,7 +55,7 @@ def random_date_in_month(month_start: pd.Timestamp) -> pd.Timestamp:
 
 def generate_pos_transactions() -> pd.DataFrame:
     records = []
-    store_counters = {store_id: 1 for store_id in STORES.keys()}
+    store_counters = {store_id: 1 for store_id in STORES}
 
     for month_start in MONTHS:
         for _ in range(TRANSACTIONS_PER_MONTH):
@@ -65,7 +65,10 @@ def generate_pos_transactions() -> pd.DataFrame:
             transaction_number = store_counters[store_id]
             store_counters[store_id] += 1
 
-            pos_transaction_id = f"{store_id}-TXN{transaction_number:06d}"
+            pos_transaction_id = (
+                f"{store_id}-TXN{transaction_number:06d}"
+            )
+
             transaction_date = random_date_in_month(month_start)
 
             payment_method = np.random.choice(
@@ -134,18 +137,28 @@ def generate_settlement_records(
         if issue_type == "delayed":
             settlement_delay = int(np.random.randint(4, 10))
 
-        settlement_date = pd.to_datetime(row["transaction_date"]) + timedelta(
-            days=settlement_delay
+        settlement_date = (
+            pd.to_datetime(row["transaction_date"])
+            + timedelta(days=settlement_delay)
         )
 
         settled_amount = row["gross_amount"]
 
         if issue_type == "amount_mismatch":
             difference = round(np.random.uniform(1, 15), 2)
-            settled_amount = round(row["gross_amount"] - difference, 2)
+            settled_amount = round(
+                row["gross_amount"] - difference,
+                2,
+            )
+
+        transaction_id_column = (
+            f"{id_prefix.lower()}_transaction_id"
+        )
 
         record = {
-            f"{id_prefix.lower()}_transaction_id": f"{id_prefix}{settlement_counter:07d}",
+            transaction_id_column: (
+                f"{id_prefix}{settlement_counter:07d}"
+            ),
             date_column_name: settlement_date.date(),
             reference_column_name: row["pos_transaction_id"],
             "store_id": row["store_id"],
@@ -159,9 +172,9 @@ def generate_settlement_records(
 
         if issue_type == "duplicate":
             duplicate_record = record.copy()
-            duplicate_record[
-                f"{id_prefix.lower()}_transaction_id"
-            ] = f"{id_prefix}{settlement_counter:07d}"
+            duplicate_record[transaction_id_column] = (
+                f"{id_prefix}{settlement_counter:07d}"
+            )
 
             records.append(duplicate_record)
             settlement_counter += 1
@@ -169,7 +182,9 @@ def generate_settlement_records(
     return pd.DataFrame(records)
 
 
-def generate_bank_settlements(pos_df: pd.DataFrame) -> pd.DataFrame:
+def generate_bank_settlements(
+    pos_df: pd.DataFrame,
+) -> pd.DataFrame:
     return generate_settlement_records(
         pos_df=pos_df,
         payment_methods=["Visa", "Mastercard", "Amex"],
@@ -182,7 +197,9 @@ def generate_bank_settlements(pos_df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def generate_cash_deposits(pos_df: pd.DataFrame) -> pd.DataFrame:
+def generate_cash_deposits(
+    pos_df: pd.DataFrame,
+) -> pd.DataFrame:
     return generate_settlement_records(
         pos_df=pos_df,
         payment_methods=["Cash"],
@@ -195,7 +212,9 @@ def generate_cash_deposits(pos_df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def generate_guest_ledger_settlements(pos_df: pd.DataFrame) -> pd.DataFrame:
+def generate_guest_ledger_settlements(
+    pos_df: pd.DataFrame,
+) -> pd.DataFrame:
     return generate_settlement_records(
         pos_df=pos_df,
         payment_methods=["Room Charge"],
@@ -208,7 +227,9 @@ def generate_guest_ledger_settlements(pos_df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def generate_corporate_receivables(pos_df: pd.DataFrame) -> pd.DataFrame:
+def generate_corporate_receivables(
+    pos_df: pd.DataFrame,
+) -> pd.DataFrame:
     return generate_settlement_records(
         pos_df=pos_df,
         payment_methods=["Corporate Account"],
@@ -221,33 +242,244 @@ def generate_corporate_receivables(pos_df: pd.DataFrame) -> pd.DataFrame:
     )
 
 
+def sample_indices(
+    df: pd.DataFrame,
+    fraction: float,
+) -> pd.Index:
+    sample_size = max(1, int(len(df) * fraction))
+
+    return df.sample(
+        n=sample_size,
+        random_state=int(np.random.randint(0, 1_000_000)),
+    ).index
+
+
+def inject_pos_data_quality_issues(
+    pos_df: pd.DataFrame,
+) -> pd.DataFrame:
+    dirty_df = pos_df.copy()
+
+    text_columns = [
+        "pos_transaction_id",
+        "transaction_date",
+        "store_id",
+        "store_name",
+        "payment_method",
+        "gross_amount",
+        "currency",
+        "transaction_status",
+    ]
+
+    dirty_df[text_columns] = dirty_df[text_columns].astype(str)
+
+    payment_indices = sample_indices(dirty_df, 0.01)
+
+    payment_variants = {
+        "Visa": " visa card ",
+        "Mastercard": "MASTERCARD ",
+        "Amex": " amex",
+        "Cash": " cash ",
+        "Room Charge": "ROOM CHARGE",
+        "Corporate Account": " corporate account ",
+    }
+
+    dirty_df.loc[payment_indices, "payment_method"] = (
+        dirty_df.loc[payment_indices, "payment_method"]
+        .map(payment_variants)
+        .fillna(dirty_df.loc[payment_indices, "payment_method"])
+    )
+
+    store_indices = sample_indices(dirty_df, 0.005)
+
+    dirty_df.loc[store_indices, "store_id"] = (
+        dirty_df.loc[store_indices, "store_id"]
+        .str.lower()
+        .map(lambda value: f" {value} ")
+    )
+
+    currency_indices = sample_indices(dirty_df, 0.005)
+    dirty_df.loc[currency_indices, "currency"] = " usd "
+
+    formatted_amount_indices = sample_indices(dirty_df, 0.005)
+
+    dirty_df.loc[
+        formatted_amount_indices,
+        "gross_amount",
+    ] = (
+        dirty_df.loc[
+            formatted_amount_indices,
+            "gross_amount",
+        ]
+        .astype(float)
+        .map(lambda value: f"${value:,.2f}")
+    )
+
+    invalid_amount_indices = sample_indices(dirty_df, 0.002)
+
+    dirty_df.loc[
+        invalid_amount_indices,
+        "gross_amount",
+    ] = "INVALID_AMOUNT"
+
+    invalid_date_indices = sample_indices(dirty_df, 0.002)
+
+    dirty_df.loc[
+        invalid_date_indices,
+        "transaction_date",
+    ] = "NOT_A_DATE"
+
+    invalid_store_indices = sample_indices(dirty_df, 0.001)
+
+    dirty_df.loc[
+        invalid_store_indices,
+        "store_id",
+    ] = "XX999"
+
+    missing_id_indices = sample_indices(dirty_df, 0.001)
+
+    dirty_df.loc[
+        missing_id_indices,
+        "pos_transaction_id",
+    ] = ""
+
+    cancelled_indices = sample_indices(dirty_df, 0.003)
+
+    dirty_df.loc[
+        cancelled_indices,
+        "transaction_status",
+    ] = " cancelled "
+
+    duplicate_indices = sample_indices(dirty_df, 0.005)
+    duplicate_rows = dirty_df.loc[duplicate_indices].copy()
+
+    dirty_df = pd.concat(
+        [dirty_df, duplicate_rows],
+        ignore_index=True,
+    )
+
+    return dirty_df
+
+
+def inject_settlement_data_quality_issues(
+    settlement_df: pd.DataFrame,
+    amount_column: str,
+    date_column: str,
+) -> pd.DataFrame:
+    dirty_df = settlement_df.copy()
+    dirty_df = dirty_df.astype(str)
+
+    reference_indices = sample_indices(dirty_df, 0.005)
+
+    dirty_df.loc[
+        reference_indices,
+        "reference_id",
+    ] = (
+        dirty_df.loc[reference_indices, "reference_id"]
+        .str.lower()
+        .map(lambda value: f" {value} ")
+    )
+
+    currency_indices = sample_indices(dirty_df, 0.005)
+    dirty_df.loc[currency_indices, "currency"] = " usd "
+
+    formatted_amount_indices = sample_indices(dirty_df, 0.005)
+
+    dirty_df.loc[
+        formatted_amount_indices,
+        amount_column,
+    ] = (
+        dirty_df.loc[
+            formatted_amount_indices,
+            amount_column,
+        ]
+        .astype(float)
+        .map(lambda value: f"${value:,.2f}")
+    )
+
+    invalid_amount_indices = sample_indices(dirty_df, 0.002)
+
+    dirty_df.loc[
+        invalid_amount_indices,
+        amount_column,
+    ] = "INVALID_AMOUNT"
+
+    invalid_date_indices = sample_indices(dirty_df, 0.002)
+
+    dirty_df.loc[
+        invalid_date_indices,
+        date_column,
+    ] = "NOT_A_DATE"
+
+    missing_reference_indices = sample_indices(dirty_df, 0.001)
+
+    dirty_df.loc[
+        missing_reference_indices,
+        "reference_id",
+    ] = ""
+
+    return dirty_df
+
+
 def main() -> None:
-    print("Generating POS transactions...")
-    pos_df = generate_pos_transactions()
+    print("Generating clean POS transactions...")
+    clean_pos_df = generate_pos_transactions()
 
-    print("Generating bank settlements...")
-    bank_df = generate_bank_settlements(pos_df)
+    print("Generating clean bank settlements...")
+    clean_bank_df = generate_bank_settlements(clean_pos_df)
 
-    print("Generating cash deposits...")
-    cash_df = generate_cash_deposits(pos_df)
+    print("Generating clean cash deposits...")
+    clean_cash_df = generate_cash_deposits(clean_pos_df)
 
-    print("Generating guest ledger settlements...")
-    ledger_df = generate_guest_ledger_settlements(pos_df)
+    print("Generating clean guest ledger settlements...")
+    clean_ledger_df = generate_guest_ledger_settlements(
+        clean_pos_df
+    )
 
-    print("Generating corporate receivables...")
-    corporate_df = generate_corporate_receivables(pos_df)
+    print("Generating clean corporate receivables...")
+    clean_corporate_df = generate_corporate_receivables(
+        clean_pos_df
+    )
+
+    print("Injecting controlled source data-quality issues...")
+
+    raw_pos_df = inject_pos_data_quality_issues(clean_pos_df)
+
+    raw_bank_df = inject_settlement_data_quality_issues(
+        settlement_df=clean_bank_df,
+        amount_column="settled_amount",
+        date_column="settlement_date",
+    )
+
+    raw_cash_df = inject_settlement_data_quality_issues(
+        settlement_df=clean_cash_df,
+        amount_column="deposited_amount",
+        date_column="deposit_date",
+    )
+
+    raw_ledger_df = inject_settlement_data_quality_issues(
+        settlement_df=clean_ledger_df,
+        amount_column="ledger_amount",
+        date_column="ledger_settlement_date",
+    )
+
+    raw_corporate_df = inject_settlement_data_quality_issues(
+        settlement_df=clean_corporate_df,
+        amount_column="receivable_amount",
+        date_column="receivable_settlement_date",
+    )
 
     output_files = {
-        "pos_transactions.csv": pos_df,
-        "bank_settlements.csv": bank_df,
-        "cash_deposits.csv": cash_df,
-        "guest_ledger_settlements.csv": ledger_df,
-        "corporate_receivables.csv": corporate_df,
+        "pos_transactions.csv": raw_pos_df,
+        "bank_settlements.csv": raw_bank_df,
+        "cash_deposits.csv": raw_cash_df,
+        "guest_ledger_settlements.csv": raw_ledger_df,
+        "corporate_receivables.csv": raw_corporate_df,
     }
 
     for file_name, dataframe in output_files.items():
         file_path = RAW_DIR / file_name
         dataframe.to_csv(file_path, index=False)
+
         print(f"{file_name} saved to: {file_path}")
         print(f"{file_name} rows: {len(dataframe):,}")
 
