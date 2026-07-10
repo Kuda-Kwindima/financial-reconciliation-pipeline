@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from uuid import uuid4
 
 import pandas as pd
 from sqlalchemy import URL, create_engine, text
@@ -45,13 +46,25 @@ def run_sql_file(sql_file_path: str) -> None:
     print(f"Executed: {sql_file_path}")
 
 
-def load_csv_to_postgres(file_name: str, table_name: str) -> None:
+def load_csv_to_postgres(
+    file_name: str,
+    table_name: str,
+    pipeline_run_id: str,
+) -> None:
     file_path = RAW_DIR / file_name
 
     if not file_path.exists():
         raise FileNotFoundError(f"File not found: {file_path}")
 
-    df = pd.read_csv(file_path)
+    df = pd.read_csv(
+        file_path,
+        dtype=str,
+        keep_default_na=False,
+    )
+
+    df["source_file"] = file_name
+    df["source_row_number"] = range(2, len(df) + 2)
+    df["pipeline_run_id"] = pipeline_run_id
 
     engine = get_engine()
 
@@ -64,10 +77,15 @@ def load_csv_to_postgres(file_name: str, table_name: str) -> None:
         chunksize=10_000,
     )
 
-    print(f"Loaded {len(df):,} rows into staging.{table_name}")
+    print(
+        f"Loaded {len(df):,} rows into staging.{table_name} "
+        f"for pipeline run {pipeline_run_id}"
+    )
 
 
 def main() -> None:
+    pipeline_run_id = str(uuid4())
+
     run_sql_file("sql/staging/create_staging_tables.sql")
     run_sql_file("sql/staging/truncate_staging_tables.sql")
 
@@ -80,9 +98,13 @@ def main() -> None:
     }
 
     for file_name, table_name in files_to_load.items():
-        load_csv_to_postgres(file_name, table_name)
+        load_csv_to_postgres(
+            file_name=file_name,
+            table_name=table_name,
+            pipeline_run_id=pipeline_run_id,
+        )
 
-    print("Staging load complete.")
+    print(f"Staging load complete. Pipeline run ID: {pipeline_run_id}")
 
 
 if __name__ == "__main__":
