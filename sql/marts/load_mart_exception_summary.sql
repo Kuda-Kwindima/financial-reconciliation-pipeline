@@ -1,7 +1,6 @@
 TRUNCATE TABLE marts.mart_exception_summary;
 
 INSERT INTO marts.mart_exception_summary (
-
     pos_transaction_id,
     settlement_transaction_id,
     transaction_date,
@@ -12,12 +11,11 @@ INSERT INTO marts.mart_exception_summary (
     pos_amount,
     settled_amount,
     amount_difference,
-    reconciliation_status
-
+    settlement_record_count,
+    reconciliation_status,
+    reconciliation_timestamp
 )
-
 SELECT
-
     pos_transaction_id,
     settlement_transaction_id,
     transaction_date,
@@ -28,7 +26,9 @@ SELECT
     pos_amount,
     settled_amount,
     amount_difference,
-    reconciliation_status
+    settlement_record_count,
+    reconciliation_status,
+    reconciliation_timestamp
 
 FROM warehouse.fact_reconciliation_results
 
