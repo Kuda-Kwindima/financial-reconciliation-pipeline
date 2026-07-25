@@ -4,11 +4,11 @@
 
 This project is an end-to-end data engineering pipeline that reconciles hospitality POS transactions against multiple settlement channels and produces business-ready reporting outputs for finance teams.
 
-The pipeline simulates a hospitality group with multiple outlets and payment methods, loads raw transaction data into PostgreSQL, transforms it through staging, warehouse, and mart layers, orchestrates the workflow with Prefect, and visualizes reconciliation performance in Power BI.
+The pipeline simulates a hospitality group with multiple outlets and payment methods, loads raw transaction data into PostgreSQL, transforms it through staging, warehouse, reconciliation, and mart layers, orchestrates the workflow with Prefect, and prepares reporting outputs for Power BI.
 
 ## Business Problem
 
-Hospitality finance teams need to verify that sales recorded in the POS system are correctly settled through the correct financial channels.
+Hospitality finance teams need to verify that sales recorded in the POS system are correctly settled through the appropriate financial channel.
 
 Common reconciliation issues include:
 
@@ -20,8 +20,6 @@ Common reconciliation issues include:
 This project helps finance teams identify which transactions require investigation, which payment methods create the most exceptions, and which outlets have the highest reconciliation risk.
 
 ## Payment Methods Covered
-
-The project reconciles multiple POS payment methods across different settlement channels.
 
 | POS Payment Method | Settlement Channel |
 |---|---|
@@ -37,9 +35,9 @@ The project reconciles multiple POS payment methods across different settlement 
 - Python
 - Pandas
 - PostgreSQL
-- Docker
 - SQL
 - SQLAlchemy
+- Docker
 - Prefect
 - Power BI
 - Git / GitHub
@@ -51,11 +49,11 @@ Synthetic POS & Settlement Data
         ↓
 Raw CSV Files
         ↓
-PostgreSQL Staging Tables
+PostgreSQL Staging Layer
         ↓
-Warehouse Fact Tables
+Warehouse Dimensions, Facts & Data-Quality Tables
         ↓
-Reconciliation Results
+Reconciliation Fact
         ↓
 Reporting Marts
         ↓
@@ -66,7 +64,7 @@ Power BI Dashboard
 
 ### 1. Raw Data
 
-Generated CSV files are stored locally in:
+Generated CSV files are stored in:
 
 ```text
 data/raw/
@@ -84,7 +82,17 @@ corporate_receivables.csv
 
 ### 2. Staging Layer
 
-Raw CSV data is loaded into PostgreSQL staging tables:
+Raw CSV values are loaded into PostgreSQL as text so that source values are preserved before validation and typing.
+
+Each staging row includes lineage fields:
+
+```text
+source_file
+source_row_number
+pipeline_run_id
+```
+
+Staging tables:
 
 ```text
 staging.pos_transactions
@@ -96,7 +104,22 @@ staging.corporate_receivables
 
 ### 3. Warehouse Layer
 
-Warehouse tables standardize data types and store trusted transaction-level records:
+The warehouse layer standardizes values, applies data types, enforces business rules, and routes records into accepted, rejected, or excluded tables.
+
+Core transformation pattern:
+
+```text
+Normalize → Type → Validate → Route
+```
+
+Dimensions:
+
+```text
+warehouse.dim_store
+warehouse.dim_payment_method
+```
+
+Accepted fact tables:
 
 ```text
 warehouse.fact_pos_transactions
@@ -104,12 +127,39 @@ warehouse.fact_bank_settlements
 warehouse.fact_cash_deposits
 warehouse.fact_guest_ledger_settlements
 warehouse.fact_corporate_receivables
+```
+
+Data-quality tables:
+
+```text
+warehouse.rejected_pos_transactions
+warehouse.excluded_pos_transactions
+warehouse.rejected_settlements
+```
+
+Rejected records contain invalid or incomplete values that cannot safely enter the trusted warehouse. Excluded records may be technically valid but are outside reconciliation scope, such as cancelled POS transactions.
+
+### 4. Reconciliation Layer
+
+```text
 warehouse.fact_reconciliation_results
 ```
 
-### 4. Mart Layer
+The reconciliation fact has one row per accepted POS transaction.
 
-Reporting marts are created for Power BI:
+Each POS transaction is matched using:
+
+```text
+POS transaction ID + expected settlement channel
+```
+
+Matching on both fields prevents false matches between card, cash, guest-ledger, and corporate settlement records.
+
+A `LEFT JOIN` is used so that POS transactions remain visible even when no settlement exists.
+
+### 5. Mart Layer
+
+Reporting marts are created for Power BI and finance analysis:
 
 ```text
 marts.mart_reconciliation_summary
@@ -120,50 +170,74 @@ marts.mart_exception_summary
 
 ## Reconciliation Logic
 
-The reconciliation engine compares each POS transaction against the expected settlement channel.
+Settlement records are standardized across the four settlement channels using `UNION ALL`, preserving duplicates so that duplicate settlement events remain detectable.
 
-Statuses generated:
+The reconciliation logic uses the following priority:
+
+1. `MISSING_SETTLEMENT`
+2. `DUPLICATE_SETTLEMENT`
+3. `AMOUNT_MISMATCH`
+4. `DELAYED_SETTLEMENT`
+5. `MATCHED`
 
 | Status | Meaning |
 |---|---|
-| MATCHED | POS transaction has a matching settlement record with correct amount and timing |
-| MISSING_SETTLEMENT | POS transaction has no matching settlement record |
-| AMOUNT_MISMATCH | Settlement exists but the amount differs from the POS amount |
-| DUPLICATE_SETTLEMENT | More than one settlement record exists for the same POS transaction |
-| DELAYED_SETTLEMENT | Settlement exists but was received more than 3 days after the POS transaction |
+| `MATCHED` | Settlement exists with the correct amount and acceptable timing |
+| `MISSING_SETTLEMENT` | No matching settlement record exists |
+| `AMOUNT_MISMATCH` | Settlement exists but the value differs from the POS amount |
+| `DUPLICATE_SETTLEMENT` | More than one settlement record exists for the same transaction and channel |
+| `DELAYED_SETTLEMENT` | Settlement was received more than three days after the POS transaction |
 
-## Key Results
+## Final Validated Results
 
-Current generated dataset:
+The following figures were validated directly from the final PostgreSQL reconciliation fact and reporting marts.
+
+### Headline Metrics
 
 | Metric | Value |
 |---|---:|
-| POS transactions | 300,000 |
-| Reconciliation result rows | 302,950 |
-| Matched transactions | 271,429 |
-| Exception rows | 31,521 |
-| Overall match rate | 89.60% |
+| Raw POS transactions generated | 300,000 |
+| Accepted reconciliation rows | 297,309 |
+| Matched transactions | 267,706 |
+| Exception transactions | 29,603 |
+| Overall match rate | 90.04% |
 
-Reconciliation summary:
+The difference between the raw POS count and accepted reconciliation rows represents records rejected or excluded during warehouse processing.
+
+### Reconciliation Summary
 
 | Status | Transaction Count | Percentage |
 |---|---:|---:|
-| MATCHED | 271,429 | 89.60% |
-| MISSING_SETTLEMENT | 12,013 | 3.97% |
-| AMOUNT_MISMATCH | 9,070 | 2.99% |
-| DUPLICATE_SETTLEMENT | 5,900 | 1.95% |
-| DELAYED_SETTLEMENT | 4,538 | 1.50% |
+| `MATCHED` | 267,706 | 90.04% |
+| `MISSING_SETTLEMENT` | 13,491 | 4.54% |
+| `AMOUNT_MISMATCH` | 8,752 | 2.94% |
+| `DELAYED_SETTLEMENT` | 4,469 | 1.50% |
+| `DUPLICATE_SETTLEMENT` | 2,891 | 0.97% |
 
-Payment method performance:
+Percentages total 99.99% because each category is rounded independently to two decimal places.
 
-| Payment Method | Settlement Channel | Total Transactions | Matched Transactions | Exception Transactions | Match Rate |
+### Payment Method Performance
+
+| Payment Method | Settlement Channel | Total Transactions | Matched | Exceptions | Match Rate |
 |---|---|---:|---:|---:|---:|
-| Visa | CARD | 106,028 | 95,077 | 10,951 | 89.67% |
-| Mastercard | CARD | 75,500 | 67,633 | 7,867 | 89.58% |
-| Cash | CASH | 45,421 | 40,634 | 4,787 | 89.46% |
-| Amex | CARD | 30,510 | 27,265 | 3,245 | 89.36% |
-| Room Charge | GUEST_LEDGER | 30,316 | 27,225 | 3,091 | 89.80% |
-| Corporate Account | CORPORATE_RECEIVABLE | 15,175 | 13,595 | 1,580 | 89.59% |
+| Visa | CARD | 104,049 | 93,738 | 10,311 | 90.09% |
+| Mastercard | CARD | 74,107 | 66,730 | 7,377 | 90.05% |
+| Cash | CASH | 44,602 | 40,089 | 4,513 | 89.88% |
+| Amex | CARD | 29,900 | 26,898 | 3,002 | 89.96% |
+| Room Charge | GUEST_LEDGER | 29,746 | 26,837 | 2,909 | 90.22% |
+| Corporate Account | CORPORATE_RECEIVABLE | 14,905 | 13,414 | 1,491 | 90.00% |
+
+Room Charge achieved the highest match rate at 90.22%. Cash had the lowest match rate at 89.88%. Visa produced the largest number of exceptions because it also had the highest transaction volume.
+
+### Store Performance
+
+| Store | Total Transactions | Matched | Exceptions | Match Rate |
+|---|---:|---:|---:|---:|
+| Pool Bar | 99,269 | 89,425 | 9,844 | 90.08% |
+| Main Restaurant | 99,031 | 89,163 | 9,868 | 90.04% |
+| Lobby Lounge | 99,009 | 89,118 | 9,891 | 90.01% |
+
+Store performance was consistent across all three outlets, with match rates ranging from 90.01% to 90.08%.
 
 ## Power BI Dashboard
 
@@ -177,8 +251,6 @@ Dashboard pages:
 
 ### 1. Executive Overview
 
-Shows overall reconciliation health:
-
 - Total reconciled transactions
 - Matched transactions
 - Exception transactions
@@ -187,23 +259,45 @@ Shows overall reconciliation health:
 
 ### 2. Payment Method Performance
 
-Shows reconciliation performance by payment method and settlement channel:
-
-- Payment method summary table
+- Payment method summary
 - Exceptions by payment method
 - Match rate by payment method
-- Settlement channel slicer
+- Settlement channel filtering
 
 ### 3. Exception Investigation
 
-Shows transaction-level exceptions requiring finance review:
+- Exception type filtering
+- Payment method filtering
+- Store filtering
+- Amount difference by exception type
+- Amount difference by store
+- Transaction-level investigation table
 
-- Exception type slicer
-- Payment method slicer
-- Store slicer
-- Exception amount difference by type
-- Exception amount difference by store
-- Detailed transaction-level exception table
+## Pipeline Execution
+
+### Python Runner
+
+```powershell
+python pipeline\run_pipeline.py
+```
+
+Execution order:
+
+```text
+Generate synthetic source data
+        ↓
+Load raw CSV files into PostgreSQL staging
+        ↓
+Execute warehouse, reconciliation, and mart SQL
+```
+
+### Prefect Flow
+
+```powershell
+python pipeline\prefect_flow.py
+```
+
+The Prefect flow wraps the same pipeline stages as observable tasks and stops execution if a dependent stage fails.
 
 ## How to Run Locally
 
@@ -233,7 +327,7 @@ pip install -r requirements.txt
 docker compose up -d
 ```
 
-Verify the container is running:
+Verify the container:
 
 ```powershell
 docker ps
@@ -261,37 +355,21 @@ Password: postgres
 python pipeline\run_pipeline.py
 ```
 
-This runs:
-
-```text
-Generate synthetic data
-Load raw CSV files to PostgreSQL staging
-Refresh warehouse and mart tables
-```
-
 ### 6. Run with Prefect orchestration
 
 ```powershell
 python pipeline\prefect_flow.py
 ```
 
-The Prefect flow orchestrates:
-
-```text
-Generate synthetic transaction data
-Load CSV files to PostgreSQL staging
-Refresh warehouse and mart tables
-```
-
 ## Main Pipeline Files
 
 | File | Purpose |
 |---|---|
-| `pipeline/generate_data.py` | Generates synthetic POS and settlement data |
-| `pipeline/load_to_postgres.py` | Loads raw CSV files into PostgreSQL staging tables |
-| `pipeline/sql_runner.py` | Runs SQL scripts in the correct order |
-| `pipeline/run_pipeline.py` | Runs the full pipeline using Python |
-| `pipeline/prefect_flow.py` | Runs the full pipeline with Prefect orchestration |
+| `pipeline/generate_data.py` | Generates reproducible synthetic POS and settlement data |
+| `pipeline/load_to_postgres.py` | Loads source CSV files into PostgreSQL staging with lineage |
+| `pipeline/sql_runner.py` | Executes SQL scripts in dependency order |
+| `pipeline/run_pipeline.py` | Runs the complete pipeline using Python subprocess orchestration |
+| `pipeline/prefect_flow.py` | Runs the complete pipeline as Prefect tasks and a Prefect flow |
 
 ## SQL Structure
 
@@ -299,6 +377,9 @@ Refresh warehouse and mart tables
 sql/
 ├── setup/
 │   └── create_schemas.sql
+├── staging/
+│   ├── create_staging_tables.sql
+│   └── truncate_staging_tables.sql
 ├── warehouse/
 │   ├── create_warehouse_tables.sql
 │   ├── load_warehouse_tables.sql
@@ -317,31 +398,31 @@ sql/
 
 ## Project Skills Demonstrated
 
-This project demonstrates:
-
 - End-to-end data pipeline design
-- PostgreSQL database modeling
-- Dockerized database setup
 - Multi-layer data architecture
-- Staging, warehouse, and mart design
-- SQL transformation logic
-- Data reconciliation rules
-- Exception monitoring
+- PostgreSQL database modeling
+- Staging, warehouse, reconciliation, and mart design
+- Source and pipeline-run lineage
+- Data normalization and type conversion
+- Data-quality routing into accepted, rejected, and excluded records
+- Deterministic POS deduplication using window functions
+- Cross-channel financial reconciliation
+- Exception classification and monitoring
 - Python pipeline automation
 - Prefect orchestration
-- Power BI reporting
-- Git/GitHub version control
+- Dockerized PostgreSQL setup
+- Power BI-ready reporting models
+- Git and GitHub version control
 
 ## Future Improvements
 
-Potential enhancements:
-
-- Add dbt for SQL model management and testing
-- Add automated data quality tests
+- Add dbt for SQL model management, documentation, and testing
+- Add automated data-quality and reconciliation tests
 - Add CI/CD validation with GitHub Actions
-- Deploy pipeline to Microsoft Fabric or Azure
 - Add incremental loading instead of full refresh
-- Add Power BI Service publishing and scheduled refresh
+- Add production logging and configurable retries
+- Deploy the pipeline to Snowflake, Microsoft Fabric, or Azure
+- Publish the Power BI report to Power BI Service with scheduled refresh
 
 ## Author
 
