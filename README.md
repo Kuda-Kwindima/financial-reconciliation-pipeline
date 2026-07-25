@@ -80,6 +80,8 @@ guest_ledger_settlements.csv
 corporate_receivables.csv
 ```
 
+The synthetic data generator intentionally introduces realistic data-quality and reconciliation scenarios, including missing identifiers, invalid values, cancelled transactions, duplicate source records, missing settlements, amount mismatches, duplicate settlements, and delayed settlements.
+
 ### 2. Staging Layer
 
 Raw CSV values are loaded into PostgreSQL as text so that source values are preserved before validation and typing.
@@ -137,7 +139,7 @@ warehouse.excluded_pos_transactions
 warehouse.rejected_settlements
 ```
 
-Rejected records contain invalid or incomplete values that cannot safely enter the trusted warehouse. Excluded records may be technically valid but are outside reconciliation scope, such as cancelled POS transactions.
+Rejected records contain invalid or incomplete values that cannot safely enter the trusted warehouse. Excluded records are valid enough to retain for audit purposes but fall outside reconciliation scope, such as cancelled transactions or duplicate source records.
 
 ### 4. Reconciliation Layer
 
@@ -190,19 +192,37 @@ The reconciliation logic uses the following priority:
 
 ## Final Validated Results
 
-The following figures were validated directly from the final PostgreSQL reconciliation fact and reporting marts.
+The following figures were validated directly from PostgreSQL staging, warehouse, reconciliation, and reporting-mart tables.
 
-### Headline Metrics
+### Data-Quality Accounting
+
+The pipeline processes **301,500 staged POS records**. During warehouse processing, each row is routed to exactly one outcome:
+
+| Warehouse Outcome | Records |
+|---|---:|
+| Accepted trusted transactions | 297,309 |
+| Rejected validation failures | 1,804 |
+| Excluded transactions | 2,387 |
+| **Total staged POS records** | **301,500** |
+
+The excluded population consists of:
+
+| Exclusion Reason | Records |
+|---|---:|
+| Duplicate source record | 1,488 |
+| Cancelled transaction | 899 |
+| **Total excluded records** | **2,387** |
+
+The accepted, rejected, and excluded categories are mutually exclusive and reconcile exactly to the staged input volume.
+
+### Headline Reconciliation Metrics
 
 | Metric | Value |
 |---|---:|
-| Raw POS transactions generated | 300,000 |
 | Accepted reconciliation rows | 297,309 |
 | Matched transactions | 267,706 |
 | Exception transactions | 29,603 |
 | Overall match rate | 90.04% |
-
-The difference between the raw POS count and accepted reconciliation rows represents records rejected or excluded during warehouse processing.
 
 ### Reconciliation Summary
 
@@ -418,6 +438,7 @@ sql/
 
 - Add dbt for SQL model management, documentation, and testing
 - Add automated data-quality and reconciliation tests
+- Add a row-accounting audit test that verifies staged rows equal accepted, rejected, and excluded rows after every run
 - Add CI/CD validation with GitHub Actions
 - Add incremental loading instead of full refresh
 - Add production logging and configurable retries
